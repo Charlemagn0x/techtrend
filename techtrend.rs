@@ -50,8 +50,11 @@ async fn collect_data(config: web::Data<AppConfig>) -> impl Responder {
     
     let client = connect_to_db(&config.db_uri).await.expect("Failed to connect to database");
 
+    // Prepare a statement for batch insert
+    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)").await.expect("Failed to prepare statement");
+
     for item in res.items {
-        client.execute("INSERT INTO trends (name, popularity) VALUES ($1, $2)", &[&item.name, &item.popularity])
+        client.execute(&statement, &[&item.name, &item.popularity])
             .await
             .expect("Failed to insert data");
     }
