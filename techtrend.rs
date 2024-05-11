@@ -41,44 +41,15 @@ struct ApiItem {
 }
 
 async fn collect_data(config: web::Data<AppConfig>) -> impl Responder {
-    let res = reqwest::get("https://api.example.com/data")
-        .await
-        .expect("Failed to fetch data")
-        .json::<ApiResponse>()
-        .await
-        .expect("Failed to parse data");
-    
+    let res = fetch_data().await;
     let client = connect_to_db(&config.db_uri).await.expect("Failed to connect to database");
-
-    // Prepare a statement for batch insert
-    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)").await.expect("Failed to prepare statement");
-
-    for item in res.items {
-        client.execute(&statement, &[&item.name, &item.popularity])
-            .await
-            .expect("Failed to insert data");
-    }
-
+    insert_data(&client, res.items).await;
     HttpResponse::Ok().body("Data collected successfully")
 }
 
 async fn get_trends(config: web::Data<AppConfig>) -> impl Responder {
     let client = connect_to_db(&config.db_uri).await.expect("Failed to connect to database");
-    
-    let rows = client.query("SELECT name, popularity FROM trends ORDER BY popularity DESC", &[])
-        .await
-        .expect("Failed to retrieve data");
-
-    let mut trends = Vec::new();
-    
-    for row in rows {
-        let trend = json!({
-            "name": row.get(0),
-            "popularity": row.get(1),
-        });
-        trends.push(trend);
-    }
-
+    let trends = fetch_trends(&client).await;
     HttpResponse::Ok().json(trends)
 }
 
@@ -92,4 +63,40 @@ async fn connect_to_db(db_uri: &str) -> Result<Client, Error> {
     });
 
     Ok(client)
+}
+
+async fn fetch_data() -> ApiResponse {
+    reqwest::get("https://api.example.com/data")
+        .await
+        .expect("Failed to fetch data")
+        .json::<ApiResponse>()
+        .await
+        .expect("Failed to parse data")
+}
+
+async fn insert_data(client: &Client, items: Vec<ApiItem>) {
+    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)").await.expect("Failed to prepare statement");
+
+    for item in items {
+        client.execute(&statement, &[&item.name, &item.popularity])
+            .await
+            .expect("Failed to insert data");
+    }
+}
+
+async fn fetch_trends(client: &Client) -> Vec<serde_json::Value> {
+    let rows = client.query("SELECT name, popularity FROM trends ORDER BY popularity DESC", &[])
+        .await
+        .expect("Failed to retrieve data");
+
+    let mut trends = Vec::new();
+    
+    for row in rows {
+        let trend = json!({
+            "name": row.get(0),
+            "popularity": row.get(1),
+        });
+        trends.push(trend);
+    }
+    trends
 }
