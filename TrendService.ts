@@ -1,9 +1,28 @@
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 
 class ApiService {
   private baseUrl: string = process.env.REACT_APP_API_URL || '';
 
-  private handleError(error: any): never {
+  private async makeRequest<T>(
+    method: 'GET' | 'POST',
+    url: string,
+    data: object = {},
+    params: object = {}
+  ): Promise<T> {
+    try {
+      let response: AxiosResponse<T>;
+      if (method === 'GET') {
+        response = await axios.get<T>(`${this.baseUrl}/${url}`, { params });
+      } else {
+        response = await axios.post<T>(`${this.baseUrl}/${url}`, data);
+      }
+      return response.data;
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  private handleError(error: AxiosError): never {
     if (error.response) {
       console.error('Error data:', error.response.data);
       console.error('Error status:', error.response.status);
@@ -11,38 +30,23 @@ class ApiService {
       throw new Error(`Error: ${error.response.status} ${error.message}`);
     } else if (error.request) {
       console.error('Error request:', error.request);
-      throw new Error('Error: The request was made but no response was received');
+      throw new Error('Error: The request was made but no response was received.');
     } else {
       console.error('Error message:', error.message);
       throw new Error('Error: ' + error.message);
     }
   }
 
-  async fetchTrendData(filters = {}): Promise<any> {
-    try {
-      const response = await axios.get(`${this.baseUrl}/trends`, { params: filters });
-      return response.data;
-    } catch (error) {
-      this.handleError(error);
-    }
+  async fetchTrendData(filters: Record<string, any> = {}): Promise<any> {
+    return this.makeRequest('GET', 'trends', {}, filters);
   }
 
   async sendUserQuery(query: string): Promise<any> {
-    try {
-      const response = await axios.post(`${this.baseUrl}/user-query`, { query });
-      return response.data;
-    } catch (error) {
-      this.handleError(error);
-    }
+    return this.makeRequest('POST', 'user-query', { query });
   }
 
   async manageSubscription(domain: string, action: 'subscribe' | 'unsubscribe'): Promise<any> {
-    try {
-      const response = await axios.post(`${this.baseUrl}/subscriptions`, { domain, action });
-      return response.data;
-    } catch (error) {
-      this.handleError(error);
-    }
+    return this.makeRequest('POST', 'subscriptions', { domain, action });
   }
 }
 
