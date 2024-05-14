@@ -9,28 +9,39 @@ interface TechTrendData {
 
 const TechTrendDashboard: React.FC = () => {
   const [trendData, setTrendData] = useState<TechTrendData[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [error, setError] = useState<string | null>(null); // Added a state to track error
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [error, setError] = useState<string | null>(null); 
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const response = await axios.get(`${process.env.REACT_APP_API_URL}/api/trends`);
+
+        // Validate response data (you can enhance this validation as per your data structure)
+        if (!Array.isArray(response.data)) {
+          throw new Error('Invalid data format received');
+        }
         setTrendData(response.data);
-        if (error) setError(null); // Clear any previous errors if the request is successful
+
+        // Clear any previous errors after successful data fetch
+        if (error) {
+          setError(null);
+        }
       } catch (error) {
         if (axios.isAxiosError(error)) {
           console.error('Error fetching trend data:', error.message);
-          setError('Failed to fetch trend data. Please try again later.'); // Provide a user-friendly error message
-        } else {
-          console.error('An unexpected error occurred:', error);
+          setError('Failed to fetch trend data. Please try again later.'); // User-friendly error message
+        } else if (error instanceof Error) {
+          // Handle generic errors (e.g., invalid data format)
+          console.error('An unexpected error occurred:', error.message);
           setError('An unexpected error occurred. Please try again.'); // Handle unexpected errors
         }
       }
     };
 
     fetchData();
-  }, [error]); // Added error as a dependency to re-fetch data when trying to clear the error
+    // Removing error from the dependency array to prevent infinite requests in case of persistent errors.
+  }, []); // Removed error as a dependency to prevent infinite loop in case of persistent errors
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(event.target.value);
@@ -49,7 +60,6 @@ const TechTrendDashboard: React.FC = () => {
         value={searchQuery}
         onChange={handleSearchChange}
       />
-      {/* Display error message if any */}
       {error && <div style={{ color: 'red' }}>{error}</div>}
       {filteredTrends.length > 0 ? (
         filteredTrends.map(trend => (
@@ -76,7 +86,6 @@ const TechTrendDashboard: React.FC = () => {
           </div>
         ))
       ) : (
-        // Display a message if no trends match the search query
         <p>No trends match your search criteria.</p>
       )}
     </div>
