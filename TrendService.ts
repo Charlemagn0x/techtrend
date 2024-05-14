@@ -18,35 +18,52 @@ class ApiService {
       }
       return response.data;
     } catch (error) {
-      this.handleError(error);
+      // Improve error handling within makeRequest
+      throw this.handleError(error);
     }
   }
 
-  private handleError(error: AxiosError): never {
-    if (error.response) {
-      console.error('Error data:', error.response.data);
-      console.error('Error status:', error.response.status);
-      console.error('Error headers:', error.response.headers);
-      throw new Error(`Error: ${error.response.status} ${error.message}`);
-    } else if (error.request) {
-      console.error('Error request:', error.request);
-      throw new Error('Error: The request was made but no response was received.');
-    } else {
-      console.error('Error message:', error.message);
-      throw new Error('Error: ' + error.message);
+  private handleError(error: unknown): Error {
+    if (axios.isAxiosError(error)) {
+      if (error.response) {
+        console.error('Error data:', error.response.data);
+        console.error('Error status:', error.response.status);
+        console.error('Error headers:', error.response.headers);
+        return new Error(`Error: ${error.response.status} ${error.message}`);
+      } else if (error.request) {
+        console.error('Error request:', error.request);
+        return new Error('Error: The request was made but no response was received');
+      }
     }
+    console.error('Unexpected error:', error);
+    return new Error('An unexpected error occurred');
   }
 
   async fetchTrendData(filters: Record<string, any> = {}): Promise<any> {
-    return this.makeRequest('GET', 'trends', {}, filters);
+    try {
+      return await this.makeRequest('GET', 'trends', {}, filters);
+    } catch (error) {
+      console.error('Failed to fetch trend data:', error);
+      throw error; // Rethrow after logging to allow consumer to handle
+    }
   }
 
   async sendUserQuery(query: string): Promise<any> {
-    return this.makeRequest('POST', 'user-query', { query });
+    try {
+      return await this.makeRequest('POST', 'user-query', { query });
+    } catch (error) {
+      console.error('Failed to send user query:', error);
+      throw error; 
+    }
   }
 
   async manageSubscription(domain: string, action: 'subscribe' | 'unsubscribe'): Promise<any> {
-    return this.makeRequest('POST', 'subscriptions', { domain, action });
+    try {
+      return await this.makeRequest('POST', 'subscriptions', { domain, action });
+    } catch (error) {
+      console.error('Failed to manage subscription:', error);
+      throw error; 
+    }
   }
 }
 
