@@ -1,15 +1,9 @@
-[dependencies]
-dashmap = "4.0.2"
-```
-
-```rust
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::env;
-use warp::http::StatusCode;
-use warp::Filter;
-use dashmap::DashMap; // Import DashMap
-use once_cell::sync::Lazy; // For initializing global instances
+use warp::{http::StatusCode, reject, Rejection, Reply};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -18,7 +12,6 @@ struct Claims {
     exp: usize,
 }
 
-// Global cache for JWTs. Consider carefully the security implications in real applications.
 static JWT_CACHE: Lazy<Arc<DashMap<String, String>>> = Lazy::new(|| Arc::new(DashMap::new()));
 
 fn main() {
@@ -26,26 +19,28 @@ fn main() {
 
     let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
 
-    let jwt_cache = Arc::clone(&JWT_CACHE); // Clone the Arc to pass into the closure
+    let jwt_cache = Arc::clone(&JWT_CACHE);
 
     let api = warp::post()
         .and(warp::path("login"))
         .and(warp::body::json())
         .and_then(move |login_request: LoginRequest| {
-            let cache = jwt_cache.clone(); // Clone it here to move into async block
-            let secret_clone = jwt_secret.clone(); // Clone the secret to move into async block
-            authenticate_user(login_request)
-                .map_ok(move |user_id| {
-                    // First, attempt to retrieve the token from cache
-                    if let Some(cached_token) = cache.get(&user_id) {
-                        return Ok(cached_token.value().clone());
-                    }
-                    // If not in cache, generate a new one and store it
-                    let token = create_jwt(&secret_clone, &user_id).unwrap(); // Handle error as per your application's needs
-                    cache.insert(user_id, token.clone());
-                    Ok(token)
-                })
+            let cache = jwt_cache.clone();
+            let secret_clone = jwt_secret.clone();
+            async move {
+                authenticate_user(login_request)
+                    .map_ok(move |user_id| {
+                        if let Some(cached_token) = cache.get(&user_id) {
+                            return Ok(cached_token.value().clone());
+                        }
+                        let token = create_jwt(&secret_clone, &user_id)?;
+                        cache.insert(user_id, token.clone());
+                        Ok(token)
+                    })
+                    .map_err(|e| reject::custom(e))
+            }
         })
+        .recover(handle_rejection)
         .map(|jwt_result| match jwt_result {
             Ok(token) => warp::reply::with_status(token, StatusCode::OK),
             Err(_) => warp::reply::with_status("Unauthorized".to_string(), StatusCode::UNAUTHORIZED),
@@ -60,15 +55,23 @@ struct LoginRequest {
     password: String,
 }
 
-fn authenticate_user(login_request: LoginRequest) -> Result<String, &'static str> {
+#[derive(Debug)]
+enum Error {
+    AuthenticationError,
+    JWTError,
+}
+
+impl reject::Reject for Error {}
+
+fn authenticate_user(login_request: LoginRequest) -> Result<String, Error> {
     if login_request.username == "admin" && login_request.password == "password" {
         Ok("user_id_example".to_string())
     } else {
-        Err("Invalid username or password")
+        Err(Error::AuthenticationError)
     }
 }
 
-fn create_jwt(secret: &str, user_id: &str) -> Result<String, &'static str> {
+fn create_jwt(secret: &str, user_id: &str) -> Result<String, Error> {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::seconds(60))
         .expect("valid timestamp")
@@ -79,23 +82,31 @@ fn create_jwt(secret: &str, user_id: &str) -> Result<String, &'static str> {
         exp: expiration as usize,
     };
 
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref())).map_err(|_| "JWT creation error")
+    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
+        .map_err(|_| Error::JWTError)
 }
 
-fn verify_jwt(token: &str, secret: &str) -> Result<Claims, &'static str> {
-    decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_ref()),
-        &Validation::default(),
-    )
-    .map(|data| data.claims)
-    .map_err(|_| "Invalid JWT")
-}
+async fn handle_rejection(err: Rejection) -> Result<impl Reply, std::convert::Infallible> {
+    if err.find::<Error>().is_some() {
+        let code;
+        let message;
 
-fn example_protected_route_handler(jwt_token: String, jwt_secret: String) -> Result<String, &'static str> {
-    if let Ok(claims) = verify_jwt(&jwt_token, &jwt_secret) {
-        Ok(format!("Access granted for user: {}", claims.sub))
+        if err.find::<Error>().contains(&&Error::AuthenticationError) {
+            code = StatusCode::UNAUTHORIZED;
+            message = "Invalid username or password.";
+        } else if err.find::<Error>().contains(&&Error::JWTError) {
+            code = StatusCode::INTERNAL_SERVER_ERROR;
+            message = "Failed to generate JWT.";
+        } else {
+            code = StatusCode::INTERNAL_SERVER_ERROR;
+            message = "Unhandled error.";
+        }
+
+        Ok(warp::reply::with_status(message, code))
     } else {
-        Err("Access denied")
+        Ok(warp::reply::with_status(
+            "Internal Server Error",
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ))
     }
 }
