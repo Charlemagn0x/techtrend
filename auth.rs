@@ -15,9 +15,18 @@ struct Claims {
 static JWT_CACHE: Lazy<Arc<DashMap<String, String>>> = Lazy::new(|| Arc::new(DashMap::new()));
 
 fn main() {
-    dotenv::dotenv().expect("Failed to read .env file");
+    if let Err(e) = dotenv::dotenv() {
+        eprintln!("Failed to read .env file: {}", e);
+        std::process::exit(1);
+    }
 
-    let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let jwt_secret = match env::var("JWT_SECRET") {
+        Ok(val) => val,
+        Err(_) => {
+            eprintln!("JWT_SECRET must be set.");
+            std::process::exit(1);
+        }
+    };
 
     let jwt_cache = Arc::clone(&JWT_CACHE);
 
@@ -28,16 +37,22 @@ fn main() {
             let cache = jwt_cache.clone();
             let secret_clone = jwt_secret.clone();
             async move {
-                authenticate_user(login_request)
-                    .map_ok(move |user_id| {
+                match authenticate_user(login_request) {
+                    Ok(user_id) => {
                         if let Some(cached_token) = cache.get(&user_id) {
-                            return Ok(cached_token.value().clone());
+                            Ok(cached_token.value().clone())
+                        } else {
+                            match create_jwt(&secret_clone, &user_id) {
+                                Ok(token) => {
+                                    cache.insert(user_id, token.clone());
+                                    Ok(token)
+                                }
+                                Err(e) => Err(reject::custom(e)),
+                            }
                         }
-                        let token = create_jwt(&secret_clone, &user_id)?;
-                        cache.insert(user_id, token.clone());
-                        Ok(token)
-                    })
-                    .map_err(|e| reject::custom(e))
+                    },
+                    Err(e) => Err(reject::custom(e)),
+                }
             }
         })
         .recover(handle_rejection)
@@ -46,7 +61,9 @@ fn main() {
             Err(_) => warp::reply::with_status("Unauthorized".to_string(), StatusCode::UNAUTHORIZED),
         });
 
-    warp::serve(api).run(([127, 0, 0, 1], 3030));
+    warp::serve(api)
+        .run(([127, 0, 0, 1], 3030))
+        .await;
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +76,7 @@ struct LoginRequest {
 enum Error {
     AuthenticationError,
     JWTError,
+    InternalServerError,
 }
 
 impl reject::Reject for Error {}
@@ -72,10 +90,10 @@ fn authenticate_user(login_request: LoginRequest) -> Result<String, Error> {
 }
 
 fn create_jwt(secret: &str, user_id: &str) -> Result<String, Error> {
-    let expiration = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::seconds(60))
-        .expect("valid timestamp")
-        .timestamp();
+    let expiration = match chrono::Utc::now().checked_add_signed(chrono::Duration::seconds(60)) {
+        Some(time) => time.timestamp(),
+        None => return Err(Error::InternalServerError),
+    };
 
     let claims = Claims {
         sub: user_id.to_owned(),
