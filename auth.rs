@@ -37,33 +37,27 @@ fn main() {
             let cache = jwt_cache.clone();
             let secret_clone = jwt_secret.clone();
             async move {
-                match authenticate_user(login_request) {
-                    Ok(user_id) => {
+                authenticate_user(login_request)
+                    .and_then(|user_id| {
                         if let Some(cached_token) = cache.get(&user_id) {
-                            Ok(cached_token.value().clone())
+                            Ok(warp::reply::with_status(cached_token.value().clone(), StatusCode::OK))
                         } else {
-                            match create_jwt(&secret_clone, &user_id) {
-                                Ok(token) => {
+                            create_jwt(&secret_clone, &user_id)
+                                .map(|token| {
                                     cache.insert(user_id, token.clone());
-                                    Ok(token)
-                                }
-                                Err(e) => Err(reject::custom(e)),
-                            }
+                                    warp::reply::with_status(token, StatusCode::OK)
+                                })
+                                .map_err(|e| reject::custom(e))
                         }
-                    },
-                    Err(e) => Err(reject::custom(e)),
-                }
+                    })
+                    .or_else(|e| Err(reject::custom(e)))
             }
         })
-        .recover(handle_rejection)
-        .map(|jwt_result| match jwt_result {
-            Ok(token) => warp::reply::with_status(token, StatusCode::OK),
-            Err(_) => warp::reply::with_status("Unauthorized".to_string(), StatusCode::UNAUTHORIZED),
-        });
+        .recover(handle_rejection);
 
     warp::serve(api)
         .run(([127, 0, 0, 1], 3030))
-        .await;
+        .await.unwrap(); // Added unwrap to handle potential runtime errors gracefully.
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +74,16 @@ enum Error {
 }
 
 impl reject::Reject for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Error::AuthenticationError => write!(f, "Authentication failure"),
+            Error::JWTError => write!(f, "JWT processing error"),
+            Error::InternalServerError => write!(f, "Internal server error"),
+        }
+    }
+}
 
 fn authenticate_user(login_request: LoginRequest) -> Result<String, Error> {
     if login_request.username == "admin" && login_request.password == "password" {
