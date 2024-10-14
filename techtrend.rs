@@ -2,7 +2,6 @@ use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashMap;
 use std::env;
 use tokio_postgres::{Client, NoTls, Error};
 
@@ -20,7 +19,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .data(config.clone())
+            .app_data(web::Data::new(config.clone()))
             .route("/collect", web::get().to(collect_data))
             .route("/trends", web::get().to(get_trends))
     })
@@ -75,7 +74,9 @@ async fn fetch_data() -> ApiResponse {
 }
 
 async fn insert_data(client: &Client, items: Vec<ApiItem>) {
-    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)").await.expect("Failed to prepare statement");
+    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)")
+        .await
+        .expect("Failed to prepare statement");
 
     for item in items {
         client.execute(&statement, &[&item.name, &item.popularity])
