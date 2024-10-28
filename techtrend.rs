@@ -42,7 +42,8 @@ struct ApiItem {
 async fn collect_data(config: web::Data<AppConfig>) -> impl Responder {
     let res = fetch_data().await;
     let client = connect_to_db(&config.db_uri).await.expect("Failed to connect to database");
-    insert_data(&client, res.items).await;
+    // Improved batch insertion
+    insert_data(&client, &res.items).await;
     HttpResponse::Ok().body("Data collected successfully")
 }
 
@@ -73,16 +74,16 @@ async fn fetch_data() -> ApiResponse {
         .expect("Failed to parse data")
 }
 
-async fn insert_data(client: &Client, items: Vec<ApiItem>) {
-    let statement = client.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)")
-        .await
-        .expect("Failed to prepare statement");
-
+// Optimized for batch insertion
+async fn insert_data(client: &Client, items: &Vec<ApiItem>) {
+    let transaction = client.transaction().await.expect("Failed to create a database transaction");
+    // Preparing the statement outside the loop for efficiency
+    let statement = transaction.prepare("INSERT INTO trends (name, popularity) VALUES ($1, $2)").await.expect("Failed to prepare statement");
     for item in items {
-        client.execute(&statement, &[&item.name, &item.popularity])
-            .await
-            .expect("Failed to insert data");
+        transaction.execute(&statement, &[&item.name, &item.popularity]).await.expect("Failed to insert data");
     }
+    // Commit the transaction after all insertions
+    transaction.commit().await.expect("Failed to commit transaction");
 }
 
 async fn fetch_trends(client: &Client) -> Vec<serde_json::Value> {
